@@ -1,0 +1,4 @@
+pretrained_models/
+instruct-pix2pix-model/
+diffusers/
+dataset/
