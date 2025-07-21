@@ -1,4 +1,8 @@
 pretrained_models/
 instruct-pix2pix-model/
 diffusers/
-dataset/
+dataset/instructpix2pix-1000-samples/
+dataset/instructpix2pix-clip-filtered/
+instruct-pix2pix-model/logs/
+pretrained_models/instruct-pix2pix/
+pretrained_models/mobilenet_v3_large.pth/
