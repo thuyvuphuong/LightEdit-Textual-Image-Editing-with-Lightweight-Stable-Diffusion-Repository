@@ -1,3 +1,12 @@
+#!/bin/bash
+
+#SBATCH --job-name=distill
+#SBATCH --ntasks=1
+#SBATCH --partition=dgx-small
+#SBATCH --output=train_outs/distill/out/%x.%j.out
+#SBATCH --error=train_outs/distill/errors/%x.%j.err
+#SBATCH --mail-type=ALL
+
 export MODEL_NAME="pretrained_models/instruct-pix2pix"
 export DATASET_ID="dataset/instructpix2pix-1000-samples"
 
