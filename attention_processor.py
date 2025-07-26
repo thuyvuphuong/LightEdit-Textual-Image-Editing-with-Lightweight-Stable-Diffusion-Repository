@@ -602,7 +602,6 @@ class Attention(nn.Module):
                 f"cross_attention_kwargs {unused_kwargs} are not expected by {self.processor.__class__.__name__} and will be ignored."
             )
         cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
-
         return self.processor(
             self,
             hidden_states,

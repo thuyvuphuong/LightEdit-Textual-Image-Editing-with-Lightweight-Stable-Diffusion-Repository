@@ -423,6 +423,22 @@ def download_image(url):
     image = image.convert("RGB")
     return image
 
+def step_weight_scheduler(current_step: int, max_steps: int):
+    stage_1 = int((2 / 3) * max_steps)
+
+    if current_step < stage_1:
+        alpha = 0.0
+        beta = 1.0
+    elif current_step < max_steps:
+        progress = (current_step - stage_1) / (max_steps - stage_1)
+        alpha = progress
+        beta = 1.0 - progress
+    else:
+        alpha = 1.0
+        beta = 0.0
+
+    return alpha, beta
+
 
 def main():
     args = parse_args()
@@ -497,31 +513,50 @@ def main():
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
     )
-    unet = UNet2DConditionModel.from_pretrained(
+    unet_teacher = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision
     )
+    
+    unet = UNet2DConditionModel(
+        down_block_types = (
+            "DownBlock2D",
+            "DownBlock2D",
+            "DownBlock2D",
+        ),
+        mid_block_type = "UNetMidBlock2DCrossAttn",
+        up_block_types = ("CrossAttnUpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D"),
+        block_out_channels = (112, 160, 960),
+        norm_num_groups = 16)
 
     # InstructPix2Pix uses an additional image for conditioning. To accommodate that,
     # it uses 8 channels (instead of 4) in the first (conv) layer of the UNet. This UNet is
     # then fine-tuned on the custom InstructPix2Pix dataset. This modified UNet is initialized
     # from the pre-trained checkpoints. For the extra channels added to the first layer, they are
     # initialized to zero.
-    logger.info("Initializing the InstructPix2Pix UNet from the pretrained UNet.")
     in_channels = 8
-    out_channels = unet.conv_in.out_channels
+    out_channels = unet_teacher.conv_in.out_channels
+    out_stu_channels = unet.conv_in.out_channels
+    unet_teacher.register_to_config(in_channels=in_channels)
     unet.register_to_config(in_channels=in_channels)
 
     with torch.no_grad():
         new_conv_in = nn.Conv2d(
-            in_channels, out_channels, unet.conv_in.kernel_size, unet.conv_in.stride, unet.conv_in.padding
+            in_channels, out_channels, unet_teacher.conv_in.kernel_size, unet_teacher.conv_in.stride, unet_teacher.conv_in.padding
         )
         new_conv_in.weight.zero_()
-        new_conv_in.weight[:, :8, :, :].copy_(unet.conv_in.weight)
+        new_conv_in.weight[:, :8, :, :].copy_(unet_teacher.conv_in.weight)
+        unet_teacher.conv_in = new_conv_in
+        
+    with torch.no_grad():
+        new_conv_in = nn.Conv2d(
+            in_channels, out_stu_channels, unet_teacher.conv_in.kernel_size, unet_teacher.conv_in.stride, unet_teacher.conv_in.padding
+        )
         unet.conv_in = new_conv_in
 
     # Freeze vae and text_encoder
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
+    unet_teacher.requires_grad_(False)
 
     # Create EMA for the unet.
     if args.use_ema:
@@ -766,8 +801,8 @@ def main():
     )
 
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
+    unet, unet_teacher, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        unet, unet_teacher, optimizer, train_dataloader, lr_scheduler
     )
 
     if args.use_ema:
@@ -913,9 +948,16 @@ def main():
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
                 # Predict the noise residual and compute loss
+                teacher_model_pred = unet(concatenated_noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
                 model_pred = unet(concatenated_noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                
+                loss_denoise = F.mse_loss(teacher_model_pred.float(), target.float(), reduction="mean")
+                loss_kd = F.mse_loss(model_pred.float(), teacher_model_pred.float(), reduction="mean")
+                
+                alpha, beta = step_weight_scheduler(global_step, args.max_train_steps)
+                loss = alpha * loss_denoise + beta * loss_kd
 
+                
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
@@ -963,8 +1005,14 @@ def main():
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
-            logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
+            logs = {
+                "step_loss": f"{loss.detach().item():.4f}",
+                "loss_denoise": f"{loss_denoise.item():.4f}",
+                "loss_kd": f"{loss_kd.item():.4f}",
+                "lr": f"{lr_scheduler.get_last_lr()[0]:.6f}"
+            }
             progress_bar.set_postfix(**logs)
+
 
             if global_step >= args.max_train_steps:
                 break
