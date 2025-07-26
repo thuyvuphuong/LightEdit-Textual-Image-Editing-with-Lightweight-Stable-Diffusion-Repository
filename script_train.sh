@@ -10,7 +10,7 @@
 export MODEL_NAME="pretrained_models/instruct-pix2pix"
 export DATASET_ID="dataset/instructpix2pix-1000-samples"
 
-CUDA_VISIBLE_DEVICES="4" accelerate launch --mixed_precision="fp16" training.py \
+CUDA_VISIBLE_DEVICES="7" accelerate launch --mixed_precision="fp16" training.py \
     --pretrained_model_name_or_path=$MODEL_NAME \
     --dataset_name=$DATASET_ID \
     --enable_xformers_memory_efficient_attention \

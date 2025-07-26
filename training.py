@@ -55,9 +55,9 @@ from diffusers.utils.torch_utils import is_compiled_module
 
 from unet_2d_condition import UNet2DConditionModel
 
+
 if is_wandb_available():
     import wandb
-
 
 logger = get_logger(__name__, log_level="INFO")
 
@@ -497,25 +497,9 @@ def main():
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
     )
-    
-    unet_teacher = UNet2DConditionModel.from_pretrained(
+    unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision
     )
-    
-    unet = UNet2DConditionModel(
-        down_block_types=(
-            "DownBlock2D",
-            "DownBlock2D",
-            "DownBlock2D",
-        ),
-        mid_block_type = "UNetMidBlock2DCrossAttn",
-        up_block_types = (
-            "CrossAttnUpBlock2D", 
-            "CrossAttnUpBlock2D", 
-            "CrossAttnUpBlock2D"),
-        block_out_channels = (112, 160, 960),
-        norm_num_groups = 16,
-        )
 
     # InstructPix2Pix uses an additional image for conditioning. To accommodate that,
     # it uses 8 channels (instead of 4) in the first (conv) layer of the UNet. This UNet is
@@ -524,30 +508,20 @@ def main():
     # initialized to zero.
     logger.info("Initializing the InstructPix2Pix UNet from the pretrained UNet.")
     in_channels = 8
-    out_channels = unet_teacher.conv_in.out_channels
-    out_channels_stu = unet.conv_in.out_channels
-    unet_teacher.register_to_config(in_channels=in_channels)
+    out_channels = unet.conv_in.out_channels
+    unet.register_to_config(in_channels=in_channels)
 
     with torch.no_grad():
         new_conv_in = nn.Conv2d(
-            in_channels, out_channels, unet_teacher.conv_in.kernel_size, unet_teacher.conv_in.stride, unet_teacher.conv_in.padding
+            in_channels, out_channels, unet.conv_in.kernel_size, unet.conv_in.stride, unet.conv_in.padding
         )
         new_conv_in.weight.zero_()
-        new_conv_in.weight[:, :8, :, :].copy_(unet_teacher.conv_in.weight)
-        unet_teacher.conv_in = new_conv_in
-        
-    with torch.no_grad():
-        new_conv_in_stu = nn.Conv2d(
-            in_channels, out_channels_stu, unet_teacher.conv_in.kernel_size, unet_teacher.conv_in.stride, unet_teacher.conv_in.padding
-        )
-        new_conv_in_stu.weight.zero_()
-        new_conv_in_stu.weight[:, :8, :, :].copy_(unet_teacher.conv_in.weight)
-        unet.conv_in = new_conv_in_stu
-        
+        new_conv_in.weight[:, :8, :, :].copy_(unet.conv_in.weight)
+        unet.conv_in = new_conv_in
+
     # Freeze vae and text_encoder
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
-    unet_teacher.requires_grad_(False)
 
     # Create EMA for the unet.
     if args.use_ema:
@@ -792,8 +766,8 @@ def main():
     )
 
     # Prepare everything with our `accelerator`.
-    unet_teacher, unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet_teacher, unet, optimizer, train_dataloader, lr_scheduler
+    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        unet, optimizer, train_dataloader, lr_scheduler
     )
 
     if args.use_ema:
@@ -810,7 +784,6 @@ def main():
     # Move text_encode and vae to gpu and cast to weight_dtype
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
-    unet_teacher.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -940,11 +913,8 @@ def main():
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
                 # Predict the noise residual and compute loss
-                model_teacher_pred = unet_teacher(concatenated_noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
                 model_pred = unet(concatenated_noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
-                denoise_loss = F.mse_loss(model_pred.float(), target.float(), reduction="sum")
-                kd_loss = kd_loss = F.mse_loss(model_pred.float(), model_teacher_pred.float(), reduction="sum")
-                loss = 0.5 * denoise_loss + 0.5 * kd_loss
+                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                 # Gather the losses across all processes for logging (if we use distributed training).
                 avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()

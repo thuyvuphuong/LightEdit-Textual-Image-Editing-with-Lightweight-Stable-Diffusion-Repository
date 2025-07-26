@@ -21,7 +21,6 @@ from torch import nn
 from diffusers.utils import deprecate, logging
 from diffusers.utils.torch_utils import apply_freeu
 from diffusers.models.activations import get_activation
-from diffusers.models.attention_processor import Attention, AttnAddedKVProcessor, AttnAddedKVProcessor2_0
 from diffusers.models.normalization import AdaGroupNorm
 from diffusers.models.resnet import (
     Downsample2D,
@@ -34,7 +33,8 @@ from diffusers.models.resnet import (
     Upsample2D,
 )
 from diffusers.models.transformers.dual_transformer_2d import DualTransformer2DModel
-from diffusers.models.transformers.transformer_2d import Transformer2DModel
+from transformer_2d import Transformer2DModel
+from attention_processor import Attention, AttnAddedKVProcessor, AttnAddedKVProcessor2_0
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
