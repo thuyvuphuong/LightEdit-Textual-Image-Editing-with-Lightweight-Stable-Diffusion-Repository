@@ -1,0 +1,1 @@
+This codebase includes adjustments and extensions made within the original source code of the Hugging Face 🤗 Diffusers library to support custom functionality.
