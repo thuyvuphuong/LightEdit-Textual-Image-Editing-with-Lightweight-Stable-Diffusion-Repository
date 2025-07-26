@@ -11,7 +11,7 @@ You can use the following datasets for training or evaluation:
 - **MagicBrush Dataset (Custom)**  
   📦 [`osunlp/MagicBrush`](https://huggingface.co/datasets/osunlp/MagicBrush)
 
-> ⚠️ When using the **MagicBrush** dataset, make sure to adjust the column names in your script. Here's a snippet to help you handle dataset-specific column mapping:
+> ⚠️ When using the **MagicBrush** or any other datasets, make sure to adjust the column names in your script. Here's a snippet to help you handle dataset-specific column mapping at:
 
 ```python
 # 6. Get the column names for input/target.
